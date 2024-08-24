@@ -3,6 +3,12 @@ import matplotlib.pyplot as plt
 from scipy.linalg import toeplitz, svd, null_space
 
 
+def autocor(phi):
+    #phi (n,N)
+
+    cor = np.einsum('ni,nj->nij', phi, phi)
+    print(np.mean(cor,axis=0).shape)
+    return np.mean(cor,axis=0)
 # Generate realizations
 def generate_signal(N, c):
     # Statistics
@@ -24,19 +30,20 @@ def generate_signal(N, c):
     return signal
 
 def noise(signals, var):
-    noise = np.random.normal(0, np.sqrt(var), size=(len(signals), 1))
+    noise = np.random.normal(0, np.sqrt(var), size=(len(signals), len(signals[0])))
     return signals + noise
 
-def denoise(signals, noisy_signals, R_phi, noise_sigma):
-    R_n = noise_sigma ** 2 * np.eye(noisy_signals.shape[0])
-    W = R_phi @ np.linalg.inv(R_phi + R_n)
+def denoise(signals, noisy_signals, R_phi, noise_sigma,H):
+    R_n = noise_sigma ** 2 * np.eye(R_phi.shape[0])
+    W = R_phi@H.T @ np.linalg.inv(H@R_phi@H.T + R_n)
 
-    denoised_signals = W @ noisy_signals
+    denoised_signals = noisy_signals @ W
 
     # Compute MSE for each denoised signal
-    mse = np.mean((signals - denoised_signals) ** 2, axis=1)
-    mse_mean = np.mean(mse)
-    print(f'Average MSE: {mse_mean}')
+    mse = np.mean((signals - denoised_signals) ** 2, axis=0)
+    print("Noise sigma: ", noise_sigma)
+    print(f'Average MSE per entry: {np.mean(mse)}')
+    print(f'Average MSE per signal: {sum(mse)}\n')
 
     return R_n, W, denoised_signals
 
@@ -63,7 +70,7 @@ def plot_signals(signals, noisy_signals, denoised_signals):
 
 
 if __name__ == '__main__':
-        '''---------------------------------PART A---------------------------------'''
+    ''''---------------------------------PART A---------------------------------'''
     # Parameters
     N = 64
     c = 0.6
@@ -71,7 +78,7 @@ if __name__ == '__main__':
 
     signals = np.array([generate_signal(N, c) for _ in range(num_realizations)])
     mean_signal = np.mean(signals, axis=0)
-    R_phi = np.corrcoef(signals)
+    R_phi = autocor(signals)
 
     # Plot the empirical mean signal
     plt.figure(figsize=(12, 6))
@@ -94,54 +101,70 @@ if __name__ == '__main__':
     '''---------------------------------PART B---------------------------------'''
     noise_sigma = np.sqrt(5)
     noisy_signals = noise(signals, noise_sigma ** 2)
-    _, _, denoised_signals = denoise(signals, noisy_signals, R_phi, noise_sigma)
+    _, W, denoised_signals = denoise(signals, noisy_signals, R_phi, noise_sigma,np.eye(R_phi.shape[0]))
     plot_signals(signals, noisy_signals, denoised_signals)
 
+    # Plot the Wiener filter matrix
+    plt.imshow(W, cmap='viridis', aspect='auto')
+    plt.title('Wiener filter matrix')
+    plt.colorbar(label='Correlation')
+
+    '''
+    M = np.eye(64,64)+np.diag(np.ones(32),32)+np.diag(np.ones(32),-32)
+    plt.imshow(M, cmap='viridis', aspect='auto')
+    plt.title('Theoretical Autocorrelation Matrix')
+    plt.colorbar(label='Correlation')
+    '''
+
     '''---------------------------------PART C---------------------------------'''
-    first_row = np.array([-5 / 2, 4 / 3, -1 / 12] + [0] * (N - 5) + [4 / 3, -1 / 12])
+    first_row = np.array([-5 / 2, 4 / 3, -1 / 12] + [0] * (N - 5) + [-1 / 12, 4 / 3])
     H = toeplitz(first_row, first_row)
+
     degraded_signals = np.array([H @ signal for signal in signals])
-    print(signals[0] - degraded_signals[0])
     noisy_degraded_signals = noise(degraded_signals, noise_sigma**2)
-    _, _, denoised_degraded_signals = denoise(signals, noisy_signals, R_phi, noise_sigma)
+    _, W_new, denoised_degraded_signals = denoise(signals, noisy_degraded_signals, R_phi, noise_sigma,H)
     plot_signals(signals, noisy_degraded_signals, denoised_degraded_signals)
 
-    '''
-    test_signal = signals[4]
-    degraded_test_signal = H @ test_signal
-
-    for i in range(2, 10):
-        val = 1/12 * test_signal[i-2] + 4/3 * test_signal[i-1] - 5/2 * test_signal[i] + 4/3 * test_signal[i+1] - 1/12 * test_signal[i+2]
-        print(degraded_test_signal[i] - val)
-    '''
-
+    # Plot the Wiener filter matrix
+    plt.imshow(W_new, cmap='viridis', aspect='auto')
+    plt.title('Wiener filter matrix')
+    plt.colorbar(label='Correlation')
+    plt.show()
     '''---------------------------------PART E---------------------------------'''
     U, s, Vh = svd(H)
     Sigma_inv = np.diag(1/s)
     H_pseudo_inv = Vh.T @ Sigma_inv @ U.T
-    '''
-    print(np.linalg.matrix_rank(H_pseudo_inv))
+
     null_space_H_pseudo_inv = null_space(H_pseudo_inv)
 
-    phi1 = np.random.randn(N)
-    # φ2 = φ1 + vector in the null space of H†
-    phi2 = phi1 + 256 * null_space_H_pseudo_inv[:, 0]
+    phi1 = np.ones(N)
+    phi2 = 250 * phi1
 
-    print("Norm of φ1 - φ2:", np.linalg.norm(phi1 - phi2))
-    print("H†φ1:", H_pseudo_inv @ phi1)
-    print("H†φ2:", H_pseudo_inv @ phi2)
-    '''
-    plt.figure(figsize=(12, 6))
+    plt.imshow(H @ H_pseudo_inv, cmap='viridis', aspect='auto')
+    plt.title('HH†')
+    plt.show()
 
-    plt.subplot(1, 2, 1)
     plt.imshow(H_pseudo_inv @ H, cmap='viridis', aspect='auto')
-    plt.colorbar()
     plt.title('H†H')
 
-    plt.subplot(1, 2, 2)
-    plt.imshow(H @ H_pseudo_inv, cmap='viridis', aspect='auto')
-    plt.colorbar()
-    plt.title('HH†')
+    print("Norm of φ1 - φ2:", np.linalg.norm(phi1 - phi2))
+    print("Norm of H†φ1 - H†φ2:", np.linalg.norm(H_pseudo_inv @ phi1 - H_pseudo_inv @ phi2))
 
+    to_plot = {
+        "φ1": phi1,
+        "φ2": phi2,
+        "φ1-φ2": phi1 - phi2,
+        "H†φ1": H_pseudo_inv @ phi1,
+        "H†φ2": H_pseudo_inv @ phi2,
+        "H†φ1 - H†φ2": H_pseudo_inv @ phi1 - H_pseudo_inv @ phi2
+        }
+
+    fig, axs = plt.subplots(2, 3, figsize=(15, 8))
+    for i, (label, signal) in enumerate(to_plot.items()):
+        row = i // 3
+        col = i % 3
+        axs[row, col].plot(signal)
+        axs[row, col].set_title(label)
+        axs[row, col].grid(True)
     plt.tight_layout()
     plt.show()
